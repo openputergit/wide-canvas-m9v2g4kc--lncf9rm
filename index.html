@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <!-- [Previous head content remains exactly the same] -->
+</head>
+<body class="bg-gray-100">
+    <!-- [Previous HTML content remains exactly the same until the script section] -->
+
+    <script>
+        // Store all messages for excel export
+        let chatMessages = [];
+        
+        // Generate a unique chat ID for the current session
+        const chatId = generateChatId();
+        
+        // Initialize chat with localStorage and real-time updates
+        function initializeChat() {
+            // Check for stored messages
+            const storedMessages = localStorage.getItem(`secureChat_${chatId}`);
+            if (storedMessages) {
+                try {
+                    chatMessages = JSON.parse(storedMessages);
+                    // Convert string timestamps back to Date objects
+                    chatMessages.forEach(msg => {
+                        msg.timestamp = new Date(msg.timestamp);
+                    });
+                    renderStoredMessages();
+                } catch (e) {
+                    console.error('Error parsing stored messages:', e);
+                }
+            }
+            
+            // Set up storage event listener for cross-tab communication
+            window.addEventListener('storage', (event) => {
+                if (event.key === `secureChat_${chatId}` && event.newValue) {
+                    try {
+                        const newMessages = JSON.parse(event.newValue);
+                        // Convert string timestamps back to Date objects
+                        newMessages.forEach(msg => {
+                            msg.timestamp = new Date(msg.timestamp);
+                        });
+                        
+                        // Only update if there are actually new messages
+                        if (newMessages.length > chatMessages.length) {
+                            chatMessages = newMessages;
+                            renderStoredMessages();
+                            
+                            // Show notification for new messages from other tabs
+                            if (document.hidden) {
+                                showNotification('New message received');
+                            }
+                        }
+                    } catch (e) {
+                        console.error('Error parsing new messages:', e);
+                    }
+                }
+            });
+        }
+        
+        function saveMessagesToStorage() {
+            localStorage.setItem(`secureChat_${chatId}`, JSON.stringify(chatMessages));
+            // This triggers the storage event in other tabs
+        }
+
+        function generateChatId() {
+            // Check if there's an existing chat ID in URL
+            const urlParams = new URLSearchParams(window.location.search);
+            const existingChatId = urlParams.get('chatid');
+            
+            if (existingChatId) {
+                return existingChatId;
+            }
+            
+            // Generate a new chat ID if none exists
+            return Math.random().toString(36).substring(2, 12);
+        }
+
+        // [Previous containsPhoneNumber, formatTimestamp, renderStoredMessages functions remain the same]
+
+        function sendMessage() {
+            const input = document.getElementById('messageInput');
+            const container = document.getElementById('messageContainer');
+            const sender = document.getElementById('senderSelect').value;
+            const message = input.value.trim();
+            const timestamp = new Date();
+
+            if (message === '') return;
+
+            if (containsPhoneNumber(message)) {
+                // Create error message
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'flex justify-center my-2';
+                errorDiv.innerHTML = `
+                    <div class="bg-red-100 text-red-700 px-4 py-2 rounded-lg">
+                        Sharing phone numbers is not allowed for security reasons
+                    </div>
+                `;
+                container.appendChild(errorDiv);
+
+                // Add to chat history with error notation
+                chatMessages.push({
+                    timestamp: timestamp,
+                    sender: sender,
+                    message: "[BLOCKED] Message contained phone number",
+                    blocked: true
+                });
+                
+                // Save to storage
+                saveMessagesToStorage();
+            } else {
+                // Create message element
+                const messageDiv = document.createElement('div');
+                const isUser1 = sender === 'User 1';
+                
+                messageDiv.className = `flex justify-${isUser1 ? 'end' : 'start'} mb-4`;
+                messageDiv.innerHTML = `
+                    <div class="flex flex-col ${isUser1 ? 'items-end' : 'items-start'}">
+                        <span class="text-xs text-gray-500 mb-1">${sender}</span>
+                        <div class="message ${isUser1 ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-800'} rounded-lg py-2 px-4">
+                            ${message}
+                        </div>
+                        <span class="text-xs text-gray-400 mt-1">${formatTimestamp(timestamp)}</span>
+                    </div>
+                `;
+                container.appendChild(messageDiv);
+
+                // Add to chat history
+                chatMessages.push({
+                    timestamp: timestamp,
+                    sender: sender,
+                    message: message,
+                    blocked: false
+                });
+                
+                // Save to storage
+                saveMessagesToStorage();
+            }
+
+            // Clear input and scroll to bottom
+            input.value = '';
+            container.scrollTop = container.scrollHeight;
+        }
+
+        // [Previous updateExcelPreview, exportToExcel functions remain the same]
+
+        // Show share modal and generate shareable link
+        function showShareModal() {
+            const modal = document.getElementById('shareModal');
+            const shareLinkInput = document.getElementById('shareLink');
+            
+            // Generate a shareable link with the chat ID
+            const currentUrl = new URL(window.location.href);
+            currentUrl.searchParams.set('chatid', chatId);
+            
+            shareLinkInput.value = currentUrl.toString();
+            modal.classList.add('active');
+        }
+
+        function showNotification(message) {
+            const notification = document.getElementById('notification');
+            notification.textContent = message;
+            notification.style.display = 'block';
+            
+            setTimeout(() => {
+                notification.style.display = 'none';
+            }, 3000);
+        }
+
+        // Copy the share link to clipboard
+        function copyShareLink() {
+            const shareLinkInput = document.getElementById('shareLink');
+            shareLinkInput.select();
+            document.execCommand('copy');
+            
+            showNotification('Chat link copied to clipboard!');
+        }
+
+        // Check for chat ID in URL parameters
+        function checkForChatId() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const sharedChatId = urlParams.get('chatid');
+            
+            if (sharedChatId && sharedChatId !== chatId) {
+                // Update our chatId to match the shared one
+                chatId = sharedChatId;
+                
+                // Display notification that user joined via shared link
+                const container = document.getElementById('messageContainer');
+                const joinMsg = document.createElement('div');
+                joinMsg.className = 'flex justify-center my-3';
+                joinMsg.innerHTML = `
+                    <div class="bg-blue-100 text-blue-800 px-4 py-2 rounded-lg text-sm">
+                        You've joined a secure chat session via shared link
+                    </div>
+                `;
+                container.appendChild(joinMsg);
+                
+                // Load messages from the shared chat
+                const storedMessages = localStorage.getItem(`secureChat_${chatId}`);
+                if (storedMessages) {
+                    try {
+                        chatMessages = JSON.parse(storedMessages);
+                        // Convert string timestamps back to Date objects
+                        chatMessages.forEach(msg => {
+                            msg.timestamp = new Date(msg.timestamp);
+                        });
+                        renderStoredMessages();
+                    } catch (e) {
+                        console.error('Error parsing stored messages:', e);
+                    }
+                }
+                
+                // Add to chat history only if it doesn't exist yet
+                const hasJoinedMessage = chatMessages.some(msg => 
+                    msg.sender === "System" && msg.message.includes("joined the chat via shared link")
+                );
+                
+                if (!hasJoinedMessage) {
+                    chatMessages.push({
+                        timestamp: new Date(),
+                        sender: "System",
+                        message: "A new user has joined the chat via shared link",
+                        blocked: false
+                    });
+                    
+                    saveMessagesToStorage();
+                }
+            }
+        }
+
+        // Event listeners
+        document.addEventListener('DOMContentLoaded', () => {
+            // Initialize chat with stored messages
+            initializeChat();
+            
+            // Allow sending message with Enter key
+            document.getElementById('messageInput').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    sendMessage();
+                }
+            });
+            
+            // Send button click
+            document.getElementById('sendBtn').addEventListener('click', sendMessage);
+
+            // Excel panel toggle
+            document.getElementById('exportBtn').addEventListener('click', function() {
+                const excelPreview = document.getElementById('excelPreview');
+                excelPreview.classList.add('active');
+                updateExcelPreview();
+            });
+
+            document.getElementById('closeExcel').addEventListener('click', function() {
+                document.getElementById('excelPreview').classList.remove('active');
+            });
+
+            document.getElementById('downloadExcel').addEventListener('click', exportToExcel);
+
+            // Share modal functions
+            document.getElementById('shareBtn').addEventListener('click', showShareModal);
+            document.getElementById('closeModalBtn').addEventListener('click', function() {
+                document.getElementById('shareModal').classList.remove('active');
+            });
+            document.getElementById('copyLinkBtn').addEventListener('click', copyShareLink);
+
+            // Check for chat ID in URL
+            checkForChatId();
+
+            // Add welcome message if it's a new chat (no messages)
+            if (chatMessages.length === 0) {
+                chatMessages.push({
+                    timestamp: new Date(),
+                    sender: "System",
+                    message: "Welcome to Secure Chat! Your personal information is protected.",
+                    blocked: false
+                });
+                
+                saveMessagesToStorage();
+                renderStoredMessages();
+            }
+        });
+    </script>
+<script>document.body.addEventListener('wheel', e => { if (!e.ctrlKey) return; e.preventDefault(); return }, { passive: false })</script>
+	</body>
+</html>
